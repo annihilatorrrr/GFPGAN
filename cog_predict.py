@@ -50,7 +50,7 @@ class Predictor(BasePredictor):
         # background enhancer with RealESRGAN
         model = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=4, act_type='prelu')
         model_path = 'gfpgan/weights/realesr-general-x4v3.pth'
-        half = True if torch.cuda.is_available() else False
+        half = bool(torch.cuda.is_available())
         self.upsampler = RealESRGANer(
             scale=4, model_path=model_path, model=model, tile=0, tile_pad=10, pre_pad=0, half=half)
 
@@ -85,12 +85,20 @@ class Predictor(BasePredictor):
             else:
                 img_mode = None
 
-            h, w = img.shape[0:2]
+            h, w = img.shape[:2]
             if h < 300:
                 img = cv2.resize(img, (w * 2, h * 2), interpolation=cv2.INTER_LANCZOS4)
 
             if self.current_version != version:
-                if version == 'v1.2':
+                if version == 'RestoreFormer':
+                    self.face_enhancer = GFPGANer(
+                        model_path='gfpgan/weights/RestoreFormer.pth',
+                        upscale=2,
+                        arch='RestoreFormer',
+                        channel_multiplier=2,
+                        bg_upsampler=self.upsampler)
+
+                elif version == 'v1.2':
                     self.face_enhancer = GFPGANer(
                         model_path='gfpgan/weights/GFPGANv1.2.pth',
                         upscale=2,
@@ -114,14 +122,6 @@ class Predictor(BasePredictor):
                         channel_multiplier=2,
                         bg_upsampler=self.upsampler)
                     self.current_version = 'v1.4'
-                elif version == 'RestoreFormer':
-                    self.face_enhancer = GFPGANer(
-                        model_path='gfpgan/weights/RestoreFormer.pth',
-                        upscale=2,
-                        arch='RestoreFormer',
-                        channel_multiplier=2,
-                        bg_upsampler=self.upsampler)
-
             try:
                 _, _, output = self.face_enhancer.enhance(
                     img, has_aligned=False, only_center_face=False, paste_back=True, weight=weight)
@@ -131,7 +131,7 @@ class Predictor(BasePredictor):
             try:
                 if scale != 2:
                     interpolation = cv2.INTER_AREA if scale < 2 else cv2.INTER_LANCZOS4
-                    h, w = img.shape[0:2]
+                    h, w = img.shape[:2]
                     output = cv2.resize(output, (int(w * scale / 2), int(h * scale / 2)), interpolation=interpolation)
             except Exception as error:
                 print('wrong scale input.', error)

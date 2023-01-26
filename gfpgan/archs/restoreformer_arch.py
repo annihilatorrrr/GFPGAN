@@ -186,11 +186,7 @@ class ResnetBlock(nn.Module):
         h = self.conv2(h)
 
         if self.in_channels != self.out_channels:
-            if self.use_conv_shortcut:
-                x = self.conv_shortcut(x)
-            else:
-                x = self.nin_shortcut(x)
-
+            x = self.conv_shortcut(x) if self.use_conv_shortcut else self.nin_shortcut(x)
         return x + h
 
 
@@ -215,11 +211,7 @@ class MultiHeadAttnBlock(nn.Module):
     def forward(self, x, y=None):
         h_ = x
         h_ = self.norm1(h_)
-        if y is None:
-            y = h_
-        else:
-            y = self.norm2(y)
-
+        y = h_ if y is None else self.norm2(y)
         q = self.q(y)
         k = self.k(h_)
         v = self.v(h_)
@@ -292,7 +284,7 @@ class MultiHeadEncoder(nn.Module):
             attn = nn.ModuleList()
             block_in = ch * in_ch_mult[i_level]
             block_out = ch * ch_mult[i_level]
-            for i_block in range(self.num_res_blocks):
+            for _ in range(self.num_res_blocks):
                 block.append(
                     ResnetBlock(
                         in_channels=block_in, out_channels=block_out, temb_channels=self.temb_ch, dropout=dropout))
@@ -322,13 +314,12 @@ class MultiHeadEncoder(nn.Module):
             block_in, 2 * z_channels if double_z else z_channels, kernel_size=3, stride=1, padding=1)
 
     def forward(self, x):
-        hs = {}
         # timestep embedding
         temb = None
 
         # downsampling
         h = self.conv_in(x)
-        hs['in'] = h
+        hs = {'in': h}
         for i_level in range(self.num_resolutions):
             for i_block in range(self.num_res_blocks):
                 h = self.down[i_level].block[i_block](h, temb)
@@ -337,14 +328,14 @@ class MultiHeadEncoder(nn.Module):
 
             if i_level != self.num_resolutions - 1:
                 # hs.append(h)
-                hs['block_' + str(i_level)] = h
+                hs[f'block_{str(i_level)}'] = h
                 h = self.down[i_level].downsample(h)
 
         # middle
         # h = hs[-1]
         if self.enable_mid:
             h = self.mid.block_1(h, temb)
-            hs['block_' + str(i_level) + '_atten'] = h
+            hs[f'block_{str(i_level)}_atten'] = h
             h = self.mid.attn_1(h)
             h = self.mid.block_2(h, temb)
             hs['mid_atten'] = h
@@ -390,7 +381,9 @@ class MultiHeadDecoder(nn.Module):
         block_in = ch * ch_mult[self.num_resolutions - 1]
         curr_res = resolution // 2**(self.num_resolutions - 1)
         self.z_shape = (1, z_channels, curr_res, curr_res)
-        print('Working with z of shape {} = {} dimensions.'.format(self.z_shape, np.prod(self.z_shape)))
+        print(
+            f'Working with z of shape {self.z_shape} = {np.prod(self.z_shape)} dimensions.'
+        )
 
         # z to block_in
         self.conv_in = torch.nn.Conv2d(z_channels, block_in, kernel_size=3, stride=1, padding=1)
@@ -410,7 +403,7 @@ class MultiHeadDecoder(nn.Module):
             block = nn.ModuleList()
             attn = nn.ModuleList()
             block_out = ch * ch_mult[i_level]
-            for i_block in range(self.num_res_blocks + 1):
+            for _ in range(self.num_res_blocks + 1):
                 block.append(
                     ResnetBlock(
                         in_channels=block_in, out_channels=block_out, temb_channels=self.temb_ch, dropout=dropout))
@@ -495,7 +488,9 @@ class MultiHeadDecoderTransformer(nn.Module):
         block_in = ch * ch_mult[self.num_resolutions - 1]
         curr_res = resolution // 2**(self.num_resolutions - 1)
         self.z_shape = (1, z_channels, curr_res, curr_res)
-        print('Working with z of shape {} = {} dimensions.'.format(self.z_shape, np.prod(self.z_shape)))
+        print(
+            f'Working with z of shape {self.z_shape} = {np.prod(self.z_shape)} dimensions.'
+        )
 
         # z to block_in
         self.conv_in = torch.nn.Conv2d(z_channels, block_in, kernel_size=3, stride=1, padding=1)
@@ -515,7 +510,7 @@ class MultiHeadDecoderTransformer(nn.Module):
             block = nn.ModuleList()
             attn = nn.ModuleList()
             block_out = ch * ch_mult[i_level]
-            for i_block in range(self.num_res_blocks + 1):
+            for _ in range(self.num_res_blocks + 1):
                 block.append(
                     ResnetBlock(
                         in_channels=block_in, out_channels=block_out, temb_channels=self.temb_ch, dropout=dropout))
@@ -555,8 +550,8 @@ class MultiHeadDecoderTransformer(nn.Module):
             for i_block in range(self.num_res_blocks + 1):
                 h = self.up[i_level].block[i_block](h, temb)
                 if len(self.up[i_level].attn) > 0:
-                    h = self.up[i_level].attn[i_block](h, hs['block_' + str(i_level) + '_atten'])
-                    # hfeature = h.clone()
+                    h = self.up[i_level].attn[i_block](h, hs[f'block_{str(i_level)}_atten'])
+                                # hfeature = h.clone()
             if i_level != 0:
                 h = self.up[i_level].upsample(h)
 
@@ -647,9 +642,7 @@ class RestoreFormer(nn.Module):
 
     def decode(self, quant, hs):
         quant = self.post_quant_conv(quant)
-        dec = self.decoder(quant, hs)
-
-        return dec
+        return self.decoder(quant, hs)
 
     def forward(self, input, **kwargs):
         quant, diff, info, hs = self.encode(input)
